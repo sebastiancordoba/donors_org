@@ -8,7 +8,9 @@ import pandas as pd
 with open("config.json", "r") as f:
     config = json.load(f)
 
-replicate_api = config.get("REPLICATE_API_TOKEN", "")
+if 'REPLICATE_API_TOKEN' in st.secrets:
+        st.success('API key already provided!', icon='✅')
+        replicate_api = st.secrets['REPLICATE_API_TOKEN']
 
 # Configurar la página
 st.set_page_config(page_title="🦙💬 Generador de Correo para Donantes")
