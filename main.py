@@ -2,26 +2,24 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 
-# Sidebar for API key input
+# Sidebar for OpenAI API Key
 st.sidebar.title("Configuración")
 openai_api_key = st.sidebar.text_input("Clave API de OpenAI", type="password", help="Introduce tu clave API de OpenAI aquí.")
-
 if not openai_api_key:
-    st.sidebar.info("Proporciona tu clave API de OpenAI para habilitar la aplicación.", icon="🗝️")
+    st.sidebar.info("Proporciona tu clave API de OpenAI para habilitar la generación de correos.", icon="🗝️")
 
 # Main page
 st.title("📧 Generador de Correos para Donantes")
 st.write(
-    "Sube un archivo CSV con información de los donantes y genera correos personalizados seleccionando una fila. "
+    "Sube un archivo CSV con información de los donantes para generar correos personalizados o genéricos en función de sus categorías. "
     "Asegúrate de que el archivo tenga las columnas: `Nombre`, `Recencia` y `Categoria`."
 )
 
-# CSV upload section
+# CSV Upload
 archivo_cargado = st.file_uploader("Sube tu archivo CSV", type=["csv"], help="Carga un archivo CSV para procesarlo.")
 datos = None
 if archivo_cargado:
     try:
-        # Load the uploaded CSV file
         datos = pd.read_csv(archivo_cargado)
         st.success("¡Archivo CSV cargado exitosamente!")
         st.dataframe(datos, use_container_width=True)
@@ -29,84 +27,116 @@ if archivo_cargado:
         st.error(f"Ocurrió un error al cargar el archivo: {e}")
 
 if datos is not None:
-    # Row selection
-    indice_fila = st.number_input(
-        "Selecciona un número de fila para generar el correo:",
-        min_value=0,
-        max_value=len(datos) - 1,
-        step=1,
-        help="El número de fila corresponde al índice del archivo CSV cargado."
+    # Selection options
+    opcion_seleccion = st.radio(
+        "Selecciona los donantes para generar correos:",
+        ("Seleccionar donantes específicos", "Generar para todos los donantes")
     )
-    
-    fila_seleccionada = datos.iloc[indice_fila]
 
-    st.write("**Información de la fila seleccionada:**")
-    st.write(f"**Nombre:** {fila_seleccionada['Nombre']}")
-    st.write(f"**Recencia:** {fila_seleccionada['Recencia']}")
-    st.write(f"**Categoría:** {fila_seleccionada['Categoria']}")
+    if opcion_seleccion == "Seleccionar donantes específicos":
+        indices_seleccionados = st.multiselect(
+            "Selecciona las filas correspondientes a los donantes:",
+            options=datos.index,
+            format_func=lambda x: f"{datos.loc[x, 'Nombre']} ({datos.loc[x, 'Categoria']})"
+        )
+        donantes_seleccionados = datos.loc[indices_seleccionados]
+    else:
+        donantes_seleccionados = datos
+
+    st.write("**Donantes seleccionados para la generación de correos:**")
+    st.dataframe(donantes_seleccionados, use_container_width=True)
 
     # Optional additional context
     contexto_adicional = st.text_area(
-        "Contexto adicional para el correo (opcional):",
+        "Contexto adicional para los correos (opcional):",
         help="Puedes agregar información extra que será incluida en el contexto del correo."
     )
 
-    if openai_api_key:
-        client = OpenAI(api_key=openai_api_key)
+    # Personalized or generic emails
+    tipo_generacion = st.radio(
+        "Selecciona el tipo de correos a generar:",
+        ("Personalizados (uno diferente para cada donante)", "Genéricos (uno por categoría con el nombre cambiado)")
+    )
 
-        if st.button("Generar Correo"):
-            # Construct prompt based on row information
-            nombre = fila_seleccionada["Nombre"]
-            categoria = fila_seleccionada["Categoria"]
+    if st.button("Generar Correos"):
+        if not openai_api_key:
+            st.error("Proporciona tu clave API de OpenAI antes de continuar.")
+        elif donantes_seleccionados.empty:
+            st.error("No se seleccionaron donantes para la generación.")
+        else:
+            client = OpenAI(api_key=openai_api_key)
+            correos_generados = []
+            correos_genericos = {}
 
-            if categoria == "Adquisición":
-                prompt = (
-                    f"Escribe un correo corto y persuasivo en español dirigido a {nombre}, "
-                    "invitándolo a convertirse en donante de nuestra organización. Destaca "
-                    "el impacto positivo que tendría su apoyo en nuestras causas, menciona "
-                    "los valores que nos impulsan y mantén un tono cálido, cercano y respetuoso."
-                )
-            elif categoria == "Retención":
-                prompt = (
-                    f"Escribe un correo corto y amable en español para {nombre}, "
-                    "agradeciéndole sinceramente sus donaciones anteriores. "
-                    "Invítalo a seguir apoyando nuestras iniciativas, resaltando la "
-                    "importancia de su contribución continua y el efecto positivo que "
-                    "ha tenido hasta ahora."
-                )
-            elif categoria == "Recuperación":
-                prompt = (
-                    f"Escribe un correo corto y cordial en español para {nombre}, "
-                    "recordándole nuestra misión y el impacto que su apoyo anterior "
-                    "ha tenido. Invítalo a retomar su compromiso como donante, "
-                    "destacando cómo su aporte puede ayudar a que sigamos creciendo "
-                    "y mejorando."
-                )
-            else:
-                prompt = (
-                    f"Escribe un correo corto y general en español para {nombre}, "
-                    "invitándolo a apoyar nuestra organización. Destaca brevemente "
-                    "nuestra misión, el impacto positivo de su posible donación "
-                    "y el valor de su contribución, manteniendo un tono respetuoso y "
-                    "cercano."
-                )
-
-
-            # Add additional context if provided
-            if contexto_adicional.strip():
-                prompt += f" Asegúrate de incluir este contexto adicional: {contexto_adicional.strip()}."
-
-            # Generate response
-            with st.spinner("Generando correo..."):
+            with st.spinner("Generando correos..."):
                 try:
-                    respuesta = client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=[{"role": "user", "content": prompt}],
-                    )
-                    contenido_correo = respuesta.choices[0].message.content
-                    st.subheader("Correo Generado:")
-                    st.write(contenido_correo)
+                    if tipo_generacion == "Genéricos (uno por categoría con el nombre cambiado)":
+                        # Generate generic emails per category
+                        categorias = donantes_seleccionados["Categoria"].unique()
+                        for categoria in categorias:
+                            # Construct prompt for each category
+                            if categoria == "Adquisición":
+                                prompt = "Escribe un correo corto en español invitando a una persona a ser donante de nuestra organización. Destaca cómo su apoyo puede marcar la diferencia."
+                            elif categoria == "Retención":
+                                prompt = "Escribe un correo corto en español agradeciendo a una persona por sus donaciones anteriores e invitándola a seguir apoyando nuestra organización."
+                            elif categoria == "Recuperación":
+                                prompt = "Escribe un correo corto en español recordándole a una persona sobre nuestra organización e invitándola a retomar su apoyo como donante."
+                            else:
+                                prompt = "Escribe un correo genérico corto en español invitando a una persona a apoyar nuestra organización."
+
+                            # Add additional context if provided
+                            if contexto_adicional.strip():
+                                prompt += f" Asegúrate de incluir este contexto adicional: {contexto_adicional.strip()}."
+
+                            response = client.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[{"role": "user", "content": prompt}],
+                            )
+                            correos_genericos[categoria] = response.choices[0].message.content
+
+                        # Assign generic emails to donors
+                        for _, row in donantes_seleccionados.iterrows():
+                            correo = correos_genericos[row["Categoria"]].replace("{nombre}", row["Nombre"])
+                            correos_generados.append({
+                                "Nombre": row["Nombre"],
+                                "Categoria": row["Categoria"],
+                                "Contenido del Correo": correo
+                            })
+
+                    else:  # Personalized emails
+                        for _, row in donantes_seleccionados.iterrows():
+                            nombre = row["Nombre"]
+                            categoria = row["Categoria"]
+
+                            # Construct prompt based on category
+                            if categoria == "Adquisición":
+                                prompt = f"Escribe un correo corto en español para {nombre} invitándolo a ser donante de nuestra organización. Destaca cómo su apoyo puede marcar la diferencia."
+                            elif categoria == "Retención":
+                                prompt = f"Escribe un correo corto en español para {nombre} agradeciéndole por sus donaciones anteriores e invitándolo a seguir apoyando nuestra organización."
+                            elif categoria == "Recuperación":
+                                prompt = f"Escribe un correo corto en español para {nombre} recordándole sobre nuestra organización e invitándolo a retomar su apoyo como donante."
+                            else:
+                                prompt = f"Escribe un correo genérico corto en español para {nombre} invitándolo a apoyar nuestra organización."
+
+                            # Add additional context if provided
+                            if contexto_adicional.strip():
+                                prompt += f" Asegúrate de incluir este contexto adicional: {contexto_adicional.strip()}."
+
+                            # Generate email content
+                            response = client.chat.completions.create(
+                                model="gpt-3.5-turbo",
+                                messages=[{"role": "user", "content": prompt}],
+                            )
+                            email_content = response.choices[0].message.content
+
+                            correos_generados.append({
+                                "Nombre": nombre,
+                                "Categoria": categoria,
+                                "Contenido del Correo": email_content
+                            })
+
+                    st.success("¡Los correos han sido generados exitosamente!")
+                    st.write("Correos generados:")
+                    st.dataframe(pd.DataFrame(correos_generados))
                 except Exception as e:
-                    st.error(f"Ocurrió un error: {e}")
-    else:
-        st.info("Proporciona tu clave API de OpenAI en la barra lateral para habilitar la generación de correos.", icon="🗝️")
+                    st.error(f"Ocurrió un error al generar los correos: {e}")
