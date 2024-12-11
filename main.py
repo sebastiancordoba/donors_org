@@ -1,95 +1,112 @@
 import streamlit as st
-import replicate
-import os
-import json
 import pandas as pd
+from openai import OpenAI
 
-# Cargar el token de Replicate desde config.json
-with open("config.json", "r") as f:
-    config = json.load(f)
+# Sidebar for API key input
+st.sidebar.title("Configuración")
+openai_api_key = st.sidebar.text_input("Clave API de OpenAI", type="password", help="Introduce tu clave API de OpenAI aquí.")
 
-if 'REPLICATE_API_TOKEN' in st.secrets:
-        st.success('API key already provided!', icon='✅')
-        replicate_api = st.secrets['REPLICATE_API_TOKEN']
+if not openai_api_key:
+    st.sidebar.info("Proporciona tu clave API de OpenAI para habilitar la aplicación.", icon="🗝️")
 
-# Configurar la página
-st.set_page_config(page_title="🦙💬 Generador de Correo para Donantes")
+# Main page
+st.title("📧 Generador de Correos para Donantes")
+st.write(
+    "Sube un archivo CSV con información de los donantes y genera correos personalizados seleccionando una fila. "
+    "Asegúrate de que el archivo tenga las columnas: `Nombre`, `Recencia` y `Categoria`."
+)
 
-st.title('🦙💬 Generador de Correo para Donantes')
+# CSV upload section
+archivo_cargado = st.file_uploader("Sube tu archivo CSV", type=["csv"], help="Carga un archivo CSV para procesarlo.")
+datos = None
+if archivo_cargado:
+    try:
+        # Load the uploaded CSV file
+        datos = pd.read_csv(archivo_cargado)
+        st.success("¡Archivo CSV cargado exitosamente!")
+        st.dataframe(datos, use_container_width=True)
+    except Exception as e:
+        st.error(f"Ocurrió un error al cargar el archivo: {e}")
 
-if not replicate_api:
-    st.warning('No se encontró la clave API en config.json. Por favor agréguela antes de continuar.', icon='⚠️')
-else:
-    os.environ['REPLICATE_API_TOKEN'] = replicate_api
+if datos is not None:
+    # Row selection
+    indice_fila = st.number_input(
+        "Selecciona un número de fila para generar el correo:",
+        min_value=0,
+        max_value=len(datos) - 1,
+        step=1,
+        help="El número de fila corresponde al índice del archivo CSV cargado."
+    )
+    
+    fila_seleccionada = datos.iloc[indice_fila]
 
-# Modelo y parámetros fijos
-llm = 'a16z-infra/llama7b-v2-chat:4f0a4744c7295c024a1de15e1a63c880d3da035fa1f49bfd344fe076074c8eea'
-max_length = 128  # Correo corto
+    st.write("**Información de la fila seleccionada:**")
+    st.write(f"**Nombre:** {fila_seleccionada['Nombre']}")
+    st.write(f"**Recencia:** {fila_seleccionada['Recencia']}")
+    st.write(f"**Categoría:** {fila_seleccionada['Categoria']}")
 
-st.header("Subir la Lista de Donantes")
-uploaded_file = st.file_uploader("Sube un archivo CSV con columnas 'Nombre' y 'Categoria'", type=["csv"])
+    # Optional additional context
+    contexto_adicional = st.text_area(
+        "Contexto adicional para el correo (opcional):",
+        help="Puedes agregar información extra que será incluida en el contexto del correo."
+    )
 
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    # Asegurar que las columnas 'Nombre' y 'Categoria' existan
-    if "Nombre" not in df.columns or "Categoria" not in df.columns:
-        st.error("El CSV debe contener las columnas 'Nombre' y 'Categoria'.")
-        st.stop()
+    if openai_api_key:
+        client = OpenAI(api_key=openai_api_key)
 
-    st.write("Vista previa de los primeros donantes:")
-    st.dataframe(df)
+        if st.button("Generar Correo"):
+            # Construct prompt based on row information
+            nombre = fila_seleccionada["Nombre"]
+            categoria = fila_seleccionada["Categoria"]
 
-    # Permitir seleccionar filas (donantes) del CSV
-    indices = df.index.tolist()
-    selected_rows = st.multiselect("Selecciona uno o varios donantes:", indices, default=indices[:1])
-
-    if selected_rows:
-        # Tomamos el primer donante seleccionado para generar el correo
-        donor_row = df.loc[selected_rows[0]]
-        selected_donor = donor_row["Nombre"]
-        donor_category = donor_row["Categoria"]
-
-        # Función para generar el correo personalizado
-        def generate_personalized_email(donor_name, donor_category):
-            cat_lower = donor_category.lower()
-            if cat_lower == "acquire":
-                intent = ("presentar por primera vez la organización y animar al donante a realizar su primera donación")
-            elif cat_lower == "returning":
-                intent = ("agradecer el apoyo previo y motivar al donante a profundizar su compromiso")
-            elif cat_lower == "retention":
-                intent = ("apreciar el apoyo continuo y mostrar el impacto para retener su colaboración")
+            if categoria == "Adquisición":
+                prompt = (
+                    f"Escribe un correo corto y persuasivo en español dirigido a {nombre}, "
+                    "invitándolo a convertirse en donante de nuestra organización. Destaca "
+                    "el impacto positivo que tendría su apoyo en nuestras causas, menciona "
+                    "los valores que nos impulsan y mantén un tono cálido, cercano y respetuoso."
+                )
+            elif categoria == "Retención":
+                prompt = (
+                    f"Escribe un correo corto y amable en español para {nombre}, "
+                    "agradeciéndole sinceramente sus donaciones anteriores. "
+                    "Invítalo a seguir apoyando nuestras iniciativas, resaltando la "
+                    "importancia de su contribución continua y el efecto positivo que "
+                    "ha tenido hasta ahora."
+                )
+            elif categoria == "Recuperación":
+                prompt = (
+                    f"Escribe un correo corto y cordial en español para {nombre}, "
+                    "recordándole nuestra misión y el impacto que su apoyo anterior "
+                    "ha tenido. Invítalo a retomar su compromiso como donante, "
+                    "destacando cómo su aporte puede ayudar a que sigamos creciendo "
+                    "y mejorando."
+                )
             else:
-                intent = ("animar el apoyo del donante de forma respetuosa y personalizada")
+                prompt = (
+                    f"Escribe un correo corto y general en español para {nombre}, "
+                    "invitándolo a apoyar nuestra organización. Destaca brevemente "
+                    "nuestra misión, el impacto positivo de su posible donación "
+                    "y el valor de su contribución, manteniendo un tono respetuoso y "
+                    "cercano."
+                )
 
-            # Instrucción para un correo corto
-            # Indicamos en el prompt que el correo sea breve, por ejemplo no más de ~50 palabras.
-            # El max_length en el pipeline ayudará a forzar longitud, pero no palabras exactas.
-            prompt = (
-                f"Eres un recaudador de fondos para una ONG. Escribe un correo electrónico breve (no más de 50 palabras), cálido y sincero para {donor_name}, "
-                f"cuyo propósito es {intent}. El correo debe ser en español, amable, agradecido y motivar al donante según su categoría. "
-                f"No incluyas marcadores de rol, solo el texto del correo. Debe ser muy corto."
-            )
-            
-            output = replicate.run(
-                llm,
-                input={
-                    "prompt": prompt,
-                    "temperature": 0.7,    # Valor fijo
-                    "top_p": 0.9,          # Valor fijo
-                    "max_length": max_length,
-                    "repetition_penalty": 1
-                }
-            )
 
-            full_response = "".join(output)
-            return full_response.strip()
+            # Add additional context if provided
+            if contexto_adicional.strip():
+                prompt += f" Asegúrate de incluir este contexto adicional: {contexto_adicional.strip()}."
 
-        if st.button("Genera email"):
+            # Generate response
             with st.spinner("Generando correo..."):
-                final_email = generate_personalized_email(selected_donor, donor_category)
-            st.markdown("**Correo generado:**")
-            st.write(final_email)
+                try:
+                    respuesta = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    contenido_correo = respuesta.choices[0].message.content
+                    st.subheader("Correo Generado:")
+                    st.write(contenido_correo)
+                except Exception as e:
+                    st.error(f"Ocurrió un error: {e}")
     else:
-        st.write("Selecciona al menos un donante para generar el correo.")
-else:
-    st.write("Por favor, sube un archivo CSV para continuar.")
+        st.info("Proporciona tu clave API de OpenAI en la barra lateral para habilitar la generación de correos.", icon="🗝️")
