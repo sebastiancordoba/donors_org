@@ -1,14 +1,16 @@
 import streamlit as st
 import pandas as pd
 
-st.title("My First Streamlit App")
+st.title("CSV Viewer")
 
-st.write("Here's a simple example of a slider:")
-value = st.slider("Pick a number", 0, 100, 50)
-st.write(f"You selected: {value}")
+# File uploader in the main area
+uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
-uploaded_file = st.file_uploader("Upload a CSV file")
 if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    st.write("Here is the uploaded file:")
-    st.write(df)
+    # Display the first 10 rows in the sidebar (left)
+    with st.sidebar:
+        st.write("First 10 rows of the uploaded CSV:")
+        st.dataframe(df.head(10))
+else:
+    st.write("Please upload a CSV file to display its first 10 rows on the left.")
